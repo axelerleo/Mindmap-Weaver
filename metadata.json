@@ -1,0 +1,5 @@
+{
+  "name": "AI Mind Map Weaver",
+  "description": "An intelligent mind mapping application that allows users to create, customize, and save mind maps. Features include node styling, adding notes and links, collapsible branches, drag-and-drop positioning, auto-layout, and zoom controls. All changes are saved automatically.",
+  "requestFramePermissions": []
+}
