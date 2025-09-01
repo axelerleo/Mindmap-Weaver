@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, forwardRef } from 'react';
 import type { MindMapNode } from '../types';
 import { PlusIcon, TrashIcon, NoteIcon, LinkIcon, ExpandIcon, CollapseIcon } from './Icons';
 import type { Dispatch } from 'react';
@@ -35,7 +35,10 @@ const hexToRgba = (hex: string, alpha: number): string => {
 };
 
 
-const Node: React.FC<NodeProps> = ({ node, isSelected, dispatch, onDragStart, childCount, leftChildrenCount, rightChildrenCount }) => {
+const Node: React.ForwardRefRenderFunction<HTMLDivElement, NodeProps> = (
+  { node, isSelected, dispatch, onDragStart, childCount, leftChildrenCount, rightChildrenCount },
+  ref
+) => {
   const [isEditing, setIsEditing] = useState(false);
   const [showNote, setShowNote] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -85,7 +88,8 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, dispatch, onDragStart, ch
 
   return (
     <div
-      className={`absolute select-none cursor-pointer transition-all duration-200 ${selectedClass} ${shapeClasses[node.shape || 'rounded-rectangle']}`}
+      ref={ref}
+      className={`absolute select-none cursor-pointer transition-shadow duration-200 ${selectedClass} ${shapeClasses[node.shape || 'rounded-rectangle']}`}
       style={{
         transform: `translate(${node.position.x}px, ${node.position.y}px)`,
       }}
@@ -252,4 +256,5 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, dispatch, onDragStart, ch
   );
 };
 
-export const MemoizedNode = React.memo(Node);
+const ForwardedNode = forwardRef(Node);
+export const MemoizedNode = React.memo(ForwardedNode);

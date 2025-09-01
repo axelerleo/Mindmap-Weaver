@@ -1,5 +1,5 @@
-import React, { useRef, useCallback, useState, useMemo } from 'react';
-import type { MindMapState, MindMapNode, Point } from '../types';
+import React, { useRef, useCallback, useState, useMemo, useEffect } from 'react';
+import type { MindMapState, Point } from '../types';
 import { MemoizedNode } from './Node';
 import type { Dispatch } from 'react';
 import type { Action } from '../hooks/useMindMap';
@@ -13,10 +13,27 @@ interface MindMapCanvasProps {
 
 const MindMapCanvas: React.FC<MindMapCanvasProps> = ({ state, dispatch, viewport, setViewport }) => {
   const canvasRef = useRef<HTMLDivElement>(null);
-  const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
-  const [draggedPosition, setDraggedPosition] = useState<{ x: number; y: number } | null>(null);
   const [isPanning, setIsPanning] = useState(false);
-  const dragOffset = useRef({ x: 0, y: 0 });
+  const panOffset = useRef({ x: 0, y: 0 });
+
+  const dragInfo = useRef<{
+    nodeId: string;
+    offsetX: number;
+    offsetY: number;
+    currentPosition: Point;
+  } | null>(null);
+
+  const nodeRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const lineRefs = useRef<Map<string, SVGPathElement>>(new Map());
+
+  useEffect(() => {
+    const style = document.createElement('style');
+    style.innerHTML = `body.dragging-node { user-select: none; }`;
+    document.head.appendChild(style);
+    return () => {
+      document.head.removeChild(style);
+    };
+  }, []);
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
@@ -25,13 +42,17 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({ state, dispatch, viewport
   }, [setViewport]);
   
   const handleNodeDragStart = useCallback((e: React.MouseEvent, nodeId: string) => {
+    e.stopPropagation();
     const node = state.nodes[nodeId];
     if (!node) return;
-    setDraggingNodeId(nodeId);
-    setDraggedPosition(node.position);
-    dragOffset.current = {
-      x: e.clientX / viewport.scale - node.position.x,
-      y: e.clientY / viewport.scale - node.position.y,
+    
+    document.body.classList.add('dragging-node');
+
+    dragInfo.current = {
+      nodeId,
+      offsetX: e.clientX / viewport.scale - node.position.x,
+      offsetY: e.clientY / viewport.scale - node.position.y,
+      currentPosition: { ...node.position },
     };
   }, [state.nodes, viewport.scale]);
 
@@ -39,7 +60,7 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({ state, dispatch, viewport
     if (e.button === 1 || (e.button === 0 && (e.metaKey || e.ctrlKey))) { 
         e.preventDefault();
         setIsPanning(true);
-        dragOffset.current = { x: e.clientX - viewport.tx, y: e.clientY - viewport.ty };
+        panOffset.current = { x: e.clientX - viewport.tx, y: e.clientY - viewport.ty };
     }
     if (!(e.target as HTMLElement).closest('.cursor-pointer')) {
         dispatch({ type: 'SET_SELECTED_NODE', payload: { nodeId: null } });
@@ -82,25 +103,87 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({ state, dispatch, viewport
     }
     return Array.from(visibleNodeIds).map(id => state.nodes[id]).filter(Boolean);
   }, [state.nodes, state.rootId]);
+  
+  const updateConnectingLines = useCallback((nodeId: string, newPosition: Point) => {
+    const node = state.nodes[nodeId];
+    if (!node) return;
+
+    const offsetX = 10000;
+    const offsetY = 10000;
+
+    // Update line from parent to this dragged node
+    if (node.parentId) {
+      const parentNode = state.nodes[node.parentId];
+      const lineEl = lineRefs.current.get(`line-${nodeId}`);
+      if (parentNode && lineEl) {
+        const fromY = parentNode.position.y + parentNode.dimensions.height / 2 + offsetY;
+        const toY = newPosition.y + node.dimensions.height / 2 + offsetY;
+        let fromX, toX;
+        if (newPosition.x > parentNode.position.x) {
+            fromX = parentNode.position.x + parentNode.dimensions.width + offsetX;
+            toX = newPosition.x + offsetX;
+        } else {
+            fromX = parentNode.position.x + offsetX;
+            toX = newPosition.x + node.dimensions.width + offsetX;
+        }
+        const pathData = `M ${fromX} ${fromY} C ${fromX + (toX - fromX) / 2} ${fromY}, ${toX - (toX - fromX) / 2} ${toY}, ${toX} ${toY}`;
+        lineEl.setAttribute('d', pathData);
+      }
+    }
+
+    // Update lines from this dragged node to its children
+    const children = Object.values(state.nodes).filter(n => n.parentId === nodeId && visibleNodes.some(vn => vn.id === n.id));
+    for (const child of children) {
+      const lineEl = lineRefs.current.get(`line-${child.id}`);
+      if (lineEl) {
+        const fromY = newPosition.y + node.dimensions.height / 2 + offsetY;
+        const toY = child.position.y + child.dimensions.height / 2 + offsetY;
+        let fromX, toX;
+        if (child.position.x > newPosition.x) {
+            fromX = newPosition.x + node.dimensions.width + offsetX;
+            toX = child.position.x + offsetX;
+        } else {
+            fromX = newPosition.x + offsetX;
+            toX = child.position.x + child.dimensions.width + offsetX;
+        }
+        const pathData = `M ${fromX} ${fromY} C ${fromX + (toX - fromX) / 2} ${fromY}, ${toX - (toX - fromX) / 2} ${toY}, ${toX} ${toY}`;
+        lineEl.setAttribute('d', pathData);
+      }
+    }
+  }, [state.nodes, visibleNodes]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (draggingNodeId) {
-      const newX = e.clientX / viewport.scale - dragOffset.current.x;
-      const newY = e.clientY / viewport.scale - dragOffset.current.y;
-      setDraggedPosition({ x: newX, y: newY });
-    } else if(isPanning) {
-        setViewport(v => ({ ...v, tx: e.clientX - dragOffset.current.x, ty: e.clientY - dragOffset.current.y}));
+    if (isPanning) {
+      setViewport(v => ({ ...v, tx: e.clientX - panOffset.current.x, ty: e.clientY - panOffset.current.y}));
+      return;
     }
-  }, [draggingNodeId, isPanning, viewport, setViewport]);
+
+    if (dragInfo.current) {
+      const { nodeId, offsetX, offsetY } = dragInfo.current;
+      const newX = e.clientX / viewport.scale - offsetX;
+      const newY = e.clientY / viewport.scale - offsetY;
+      
+      dragInfo.current.currentPosition = { x: newX, y: newY };
+      
+      const nodeEl = nodeRefs.current.get(nodeId);
+      if (nodeEl) {
+        nodeEl.style.transform = `translate(${newX}px, ${newY}px)`;
+      }
+      updateConnectingLines(nodeId, { x: newX, y: newY });
+    }
+  }, [isPanning, viewport.scale, setViewport, updateConnectingLines]);
 
   const handleMouseUp = useCallback(() => {
-    if (draggingNodeId && draggedPosition) {
-      dispatch({ type: 'UPDATE_NODE_POSITION', payload: { nodeId: draggingNodeId, position: draggedPosition } });
+    if (dragInfo.current) {
+      document.body.classList.remove('dragging-node');
+      const { nodeId, currentPosition } = dragInfo.current;
+      dispatch({ type: 'UPDATE_NODE_POSITION', payload: { nodeId: nodeId, position: currentPosition } });
+      dragInfo.current = null;
     }
-    setDraggingNodeId(null);
-    setDraggedPosition(null);
-    setIsPanning(false);
-  }, [draggingNodeId, draggedPosition, dispatch]);
+    if (isPanning) {
+      setIsPanning(false);
+    }
+  }, [dispatch, isPanning]);
 
   return (
     <div
@@ -111,7 +194,7 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({ state, dispatch, viewport
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
-      style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
+      style={{ cursor: isPanning || dragInfo.current ? 'grabbing' : 'grab' }}
     >
       <div
         className="transform-origin-top-left"
@@ -139,24 +222,21 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({ state, dispatch, viewport
                 const parentNode = state.nodes[node.parentId];
                 if (!parentNode || !visibleNodes.some(n => n.id === parentNode.id)) return null;
 
-                const childToRender = node.id === draggingNodeId && draggedPosition ? { ...node, position: draggedPosition } : node;
-                const parentToRender = parentNode.id === draggingNodeId && draggedPosition ? { ...parentNode, position: draggedPosition } : parentNode;
-
                 const offsetX = 10000;
                 const offsetY = 10000;
                 
-                const fromY = parentToRender.position.y + parentToRender.dimensions.height / 2 + offsetY;
-                const toY = childToRender.position.y + childToRender.dimensions.height / 2 + offsetY;
+                const fromY = parentNode.position.y + parentNode.dimensions.height / 2 + offsetY;
+                const toY = node.position.y + node.dimensions.height / 2 + offsetY;
                 
                 let fromX, toX;
                 
                 // Child is to the right of the parent
-                if (childToRender.position.x > parentToRender.position.x) {
-                    fromX = parentToRender.position.x + parentToRender.dimensions.width + offsetX;
-                    toX = childToRender.position.x + offsetX;
+                if (node.position.x > parentNode.position.x) {
+                    fromX = parentNode.position.x + parentNode.dimensions.width + offsetX;
+                    toX = node.position.x + offsetX;
                 } else { // Child is to the left of the parent
-                    fromX = parentToRender.position.x + offsetX;
-                    toX = childToRender.position.x + childToRender.dimensions.width + offsetX;
+                    fromX = parentNode.position.x + offsetX;
+                    toX = node.position.x + node.dimensions.width + offsetX;
                 }
             
                 const pathData = `M ${fromX} ${fromY} C ${fromX + (toX - fromX) / 2} ${fromY}, ${toX - (toX - fromX) / 2} ${toY}, ${toX} ${toY}`;
@@ -164,6 +244,10 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({ state, dispatch, viewport
                 return (
                     <path
                         key={`line-${node.id}`}
+                        ref={el => {
+                            if (el) lineRefs.current.set(`line-${node.id}`, el);
+                            else lineRefs.current.delete(`line-${node.id}`);
+                        }}
                         d={pathData}
                         stroke={node.style.lineColor}
                         strokeWidth="2"
@@ -177,13 +261,14 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({ state, dispatch, viewport
           const isRoot = node.id === state.rootId;
           const allChildren = Object.values(state.nodes).filter(n => n.parentId === node.id);
           
-          const isDragging = node.id === draggingNodeId;
-          const nodeToRender = isDragging && draggedPosition ? { ...node, position: draggedPosition } : node;
-
           return (
             <MemoizedNode
               key={node.id}
-              node={nodeToRender}
+              ref={el => {
+                  if (el) nodeRefs.current.set(node.id, el);
+                  else nodeRefs.current.delete(node.id);
+              }}
+              node={node}
               isSelected={state.selectedNodeId === node.id}
               dispatch={dispatch}
               onDragStart={handleNodeDragStart}
