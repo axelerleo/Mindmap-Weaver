@@ -43,6 +43,6 @@ export interface MindMapState {
   nodes: MindMapData;
   connections: Connection[];
   rootId: string;
-  selectedNodeId: string | null;
+  selectedNodeIds: string[];
   selectedConnectionId: string | null;
 }

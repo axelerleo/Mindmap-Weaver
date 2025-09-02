@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import type { MindMapNode, NodeStyle, NodeShape } from '../types';
 import type { Dispatch } from 'react';
-// FIX: Import the specific Action type from useMindMap to resolve type conflicts.
 import type { Action } from '../hooks/useMindMap';
 
 interface SidePanelProps {

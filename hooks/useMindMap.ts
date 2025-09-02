@@ -8,18 +8,29 @@ export type Action =
   | { type: 'LOAD_MAP'; payload: MindMapState }
   | { type: 'ADD_NODE'; payload: { parentId: string; content?: string; branch?: 'left' | 'right' } }
   | { type: 'DELETE_NODE'; payload: { nodeId: string } }
+  | { type: 'DELETE_NODES'; payload: { nodeIds: string[] } }
   | { type: 'UPDATE_NODE_CONTENT'; payload: { nodeId: string; content: string } }
   | { type: 'UPDATE_NODE_POSITION'; payload: { nodeId: string; position: Point } }
   | { type: 'UPDATE_NODE_STYLE'; payload: { nodeId: string; style: Partial<NodeStyle> } }
+  | { type: 'UPDATE_MULTIPLE_NODES_STYLE'; payload: { nodeIds: string[]; style: Partial<NodeStyle> } }
   | { type: 'UPDATE_NODE_DETAILS'; payload: { nodeId: string; note?: string; link?: string } }
   | { type: 'TOGGLE_COLLAPSE'; payload: { nodeId: string } }
   | { type: 'TOGGLE_ROOT_BRANCH_COLLAPSE'; payload: { branch: 'left' | 'right' } }
-  | { type: 'SET_SELECTED_NODE'; payload: { nodeId: string | null } }
+  | { type: 'SET_SELECTED_NODES'; payload: { nodeIds: string[] } }
   | { type: 'UPDATE_NODE_SHAPE'; payload: { nodeId: string; shape: NodeShape } }
+  | { type: 'UPDATE_MULTIPLE_NODES_SHAPE'; payload: { nodeIds: string[]; shape: NodeShape } }
   | { type: 'AUTO_LAYOUT' }
   | { type: 'ADD_CONNECTION'; payload: { from: string; to: string } }
   | { type: 'DELETE_CONNECTION'; payload: { connectionId: string } }
-  | { type: 'SET_SELECTED_CONNECTION'; payload: { connectionId: string | null } };
+  | { type: 'SET_SELECTED_CONNECTION'; payload: { connectionId: string | null } }
+  | { type: 'UNDO' }
+  | { type: 'REDO' };
+
+interface HistoryState {
+    past: MindMapState[];
+    present: MindMapState;
+    future: MindMapState[];
+}
 
 
 const defaultNodeStyle: NodeStyle = {
@@ -44,10 +55,12 @@ const createNewNode = (parentId: string | null, content = 'New Idea'): MindMapNo
   shape: 'rounded-rectangle',
 });
 
-const getInitialState = (): MindMapState => {
+const getInitialState = (): HistoryState => {
   const savedState = loadMap() as MindMapState | null;
+  let presentState: MindMapState;
+
   if (savedState) {
-    // Simple migration for older maps
+    // Migration for older maps
     Object.values(savedState.nodes).forEach(node => {
         if (!node.shape) {
             node.shape = 'rounded-rectangle';
@@ -78,37 +91,50 @@ const getInitialState = (): MindMapState => {
     if (savedState.selectedConnectionId === undefined) {
         savedState.selectedConnectionId = null;
     }
-    return savedState;
+    // Migration from selectedNodeId to selectedNodeIds
+    if ((savedState as any).selectedNodeId) {
+        savedState.selectedNodeIds = [(savedState as any).selectedNodeId];
+        delete (savedState as any).selectedNodeId;
+    } else if (!savedState.selectedNodeIds) {
+        savedState.selectedNodeIds = [];
+    }
+    presentState = savedState;
+  } else {
+    const rootNode = createNewNode(null, 'Central Idea');
+    rootNode.position = { x: 0, y: 200 };
+    rootNode.isLeftCollapsed = false;
+    rootNode.isRightCollapsed = false;
+    
+    const rightChild = createNewNode(rootNode.id, 'Sub-idea');
+    rightChild.position = { x: 250, y: 150 };
+    rightChild.branch = 'right';
+  
+    const leftChild = createNewNode(rootNode.id, 'Another Sub-idea');
+    leftChild.position = { x: -250, y: 250 };
+    leftChild.branch = 'left';
+  
+    const initialConnections: Connection[] = [
+      { id: `conn_${Date.now()}_1`, from: rootNode.id, to: rightChild.id },
+      { id: `conn_${Date.now()}_2`, from: rootNode.id, to: leftChild.id },
+    ];
+  
+    presentState = {
+      nodes: {
+        [rootNode.id]: rootNode,
+        [rightChild.id]: rightChild,
+        [leftChild.id]: leftChild,
+      },
+      connections: initialConnections,
+      rootId: rootNode.id,
+      selectedNodeIds: [],
+      selectedConnectionId: null,
+    };
   }
 
-  const rootNode = createNewNode(null, 'Central Idea');
-  rootNode.position = { x: 0, y: 200 };
-  rootNode.isLeftCollapsed = false;
-  rootNode.isRightCollapsed = false;
-  
-  const rightChild = createNewNode(rootNode.id, 'Sub-idea');
-  rightChild.position = { x: 250, y: 150 };
-  rightChild.branch = 'right';
-
-  const leftChild = createNewNode(rootNode.id, 'Another Sub-idea');
-  leftChild.position = { x: -250, y: 250 };
-  leftChild.branch = 'left';
-
-  const initialConnections: Connection[] = [
-    { id: `conn_${Date.now()}_1`, from: rootNode.id, to: rightChild.id },
-    { id: `conn_${Date.now()}_2`, from: rootNode.id, to: leftChild.id },
-  ];
-
   return {
-    nodes: {
-      [rootNode.id]: rootNode,
-      [rightChild.id]: rightChild,
-      [leftChild.id]: leftChild,
-    },
-    connections: initialConnections,
-    rootId: rootNode.id,
-    selectedNodeId: null,
-    selectedConnectionId: null,
+    past: [],
+    present: presentState,
+    future: [],
   };
 };
 
@@ -197,27 +223,60 @@ const mindMapReducer = (state: MindMapState, action: Action): MindMapState => {
           [newNode.id]: newNode,
         },
         connections: [...state.connections, newConnection],
-        selectedNodeId: newNode.id,
+        selectedNodeIds: [newNode.id],
         selectedConnectionId: null,
       };
     }
     
     case 'DELETE_NODE': {
-      const { nodeId } = action.payload;
-      if (nodeId === state.rootId) return state; // Cannot delete root
+        const { nodeId } = action.payload;
+        if (nodeId === state.rootId) return state; // Cannot delete root
+  
+        const nodesToDelete = new Set<string>([nodeId]);
+        const queue = [nodeId];
+        
+        while (queue.length > 0) {
+          const currentId = queue.shift()!;
+          Object.values(state.nodes).forEach(node => {
+            if (node.parentId === currentId) {
+              nodesToDelete.add(node.id);
+              queue.push(node.id);
+            }
+          });
+        }
+  
+        const newNodes = { ...state.nodes };
+        nodesToDelete.forEach(id => delete newNodes[id]);
+        
+        const newConnections = state.connections.filter(
+          conn => !nodesToDelete.has(conn.from) && !nodesToDelete.has(conn.to)
+        );
+  
+        return {
+          ...state,
+          nodes: newNodes,
+          connections: newConnections,
+          selectedNodeIds: state.selectedNodeIds.filter(id => id !== nodeId),
+        };
+      }
+  
+    case 'DELETE_NODES': {
+      const { nodeIds } = action.payload;
+      const nodesToDelete = new Set<string>();
+      const queue = [...nodeIds.filter(id => id !== state.rootId)];
 
-      const nodesToDelete = new Set<string>([nodeId]);
-      const queue = [nodeId];
-      
       while (queue.length > 0) {
         const currentId = queue.shift()!;
+        if (nodesToDelete.has(currentId)) continue;
+        nodesToDelete.add(currentId);
         Object.values(state.nodes).forEach(node => {
           if (node.parentId === currentId) {
-            nodesToDelete.add(node.id);
             queue.push(node.id);
           }
         });
       }
+      
+      if (nodesToDelete.size === 0) return state;
 
       const newNodes = { ...state.nodes };
       nodesToDelete.forEach(id => delete newNodes[id]);
@@ -225,17 +284,31 @@ const mindMapReducer = (state: MindMapState, action: Action): MindMapState => {
       const newConnections = state.connections.filter(
         conn => !nodesToDelete.has(conn.from) && !nodesToDelete.has(conn.to)
       );
-
+      
       return {
         ...state,
         nodes: newNodes,
         connections: newConnections,
-        selectedNodeId: state.selectedNodeId === nodeId ? null : state.selectedNodeId,
+        selectedNodeIds: [],
+        selectedConnectionId: null,
       };
     }
 
+    case 'UPDATE_NODE_POSITION': {
+        const { nodeId, position } = action.payload;
+        const node = state.nodes[nodeId];
+        if (!node) return state;
+
+        // Prevent adding to history if position hasn't changed (e.g., on a simple click)
+        if (node.position.x === position.x && node.position.y === position.y) {
+            return state;
+        }
+
+        const updatedNode: MindMapNode = { ...node, position: position };
+        return { ...state, nodes: { ...state.nodes, [nodeId]: updatedNode } };
+    }
+    
     case 'UPDATE_NODE_CONTENT':
-    case 'UPDATE_NODE_POSITION':
     case 'UPDATE_NODE_STYLE':
     case 'UPDATE_NODE_DETAILS':
     case 'TOGGLE_COLLAPSE':
@@ -246,7 +319,6 @@ const mindMapReducer = (state: MindMapState, action: Action): MindMapState => {
       
       let updatedNode: MindMapNode;
       if(action.type === 'UPDATE_NODE_CONTENT') updatedNode = { ...node, content: action.payload.content };
-      else if(action.type === 'UPDATE_NODE_POSITION') updatedNode = { ...node, position: action.payload.position };
       else if(action.type === 'UPDATE_NODE_STYLE') updatedNode = { ...node, style: { ...node.style, ...action.payload.style } };
       else if(action.type === 'UPDATE_NODE_DETAILS') updatedNode = { ...node, note: action.payload.note ?? node.note, link: action.payload.link ?? node.link };
       else if(action.type === 'TOGGLE_COLLAPSE') updatedNode = { ...node, isCollapsed: !node.isCollapsed };
@@ -277,8 +349,8 @@ const mindMapReducer = (state: MindMapState, action: Action): MindMapState => {
         };
     }
 
-    case 'SET_SELECTED_NODE':
-      return { ...state, selectedNodeId: action.payload.nodeId, selectedConnectionId: null };
+    case 'SET_SELECTED_NODES':
+      return { ...state, selectedNodeIds: action.payload.nodeIds, selectedConnectionId: null };
       
     case 'AUTO_LAYOUT': {
       const updatedNodes = autoLayout(state.nodes, state.rootId);
@@ -387,19 +459,104 @@ const mindMapReducer = (state: MindMapState, action: Action): MindMapState => {
     }
 
     case 'SET_SELECTED_CONNECTION':
-      return { ...state, selectedConnectionId: action.payload.connectionId, selectedNodeId: null };
+      return { ...state, selectedConnectionId: action.payload.connectionId, selectedNodeIds: [] };
+      
+    case 'UPDATE_MULTIPLE_NODES_STYLE': {
+        const { nodeIds, style } = action.payload;
+        const newNodes = { ...state.nodes };
+        nodeIds.forEach(nodeId => {
+            if (newNodes[nodeId]) {
+                newNodes[nodeId] = {
+                    ...newNodes[nodeId],
+                    style: { ...newNodes[nodeId].style, ...style }
+                };
+            }
+        });
+        return { ...state, nodes: newNodes };
+    }
+    
+    case 'UPDATE_MULTIPLE_NODES_SHAPE': {
+        const { nodeIds, shape } = action.payload;
+        const newNodes = { ...state.nodes };
+        nodeIds.forEach(nodeId => {
+            if (newNodes[nodeId]) {
+                newNodes[nodeId] = { ...newNodes[nodeId], shape };
+            }
+        });
+        return { ...state, nodes: newNodes };
+    }
 
     default:
       return state;
   }
 };
 
+const undoable = (reducer: typeof mindMapReducer) => {
+    const initialState = getInitialState();
+
+    return (state: HistoryState = initialState, action: Action): HistoryState => {
+        const { past, present, future } = state;
+
+        // Actions that shouldn't affect the undo history
+        const nonUndoableActions = ['SET_SELECTED_NODES', 'SET_SELECTED_CONNECTION'];
+        if (nonUndoableActions.includes(action.type)) {
+            return {
+                ...state,
+                present: reducer(present, action)
+            };
+        }
+
+        switch (action.type) {
+            case 'UNDO': {
+                if (past.length === 0) return state;
+                const previous = past[past.length - 1];
+                const newPast = past.slice(0, past.length - 1);
+                return {
+                    past: newPast,
+                    present: previous,
+                    future: [present, ...future],
+                };
+            }
+            case 'REDO': {
+                if (future.length === 0) return state;
+                const next = future[0];
+                const newFuture = future.slice(1);
+                return {
+                    past: [...past, present],
+                    present: next,
+                    future: newFuture,
+                };
+            }
+            default: {
+                const newPresent = reducer(present, action);
+                // If the state hasn't changed, don't update history
+                if (newPresent === present) {
+                    return state;
+                }
+                return {
+                    past: [...past, present],
+                    present: newPresent,
+                    future: [], // Clear future on new action
+                };
+            }
+        }
+    };
+};
+
+const finalReducer = undoable(mindMapReducer);
+
 export const useMindMap = () => {
-  const [state, dispatch] = useReducer(mindMapReducer, getInitialState());
+  const [historyState, dispatch] = useReducer(finalReducer, getInitialState());
 
   useEffect(() => {
-    saveMap(state);
-  }, [state]);
+    // We only save the present state, not the entire history
+    saveMap(historyState.present);
+  }, [historyState.present]);
 
-  return { state, dispatch };
+  return { 
+    state: historyState.present, 
+    dispatch,
+    canUndo: historyState.past.length > 0,
+    canRedo: historyState.future.length > 0,
+  };
 };

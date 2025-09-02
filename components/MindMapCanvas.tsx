@@ -29,6 +29,15 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({ state, dispatch, viewport
     endPoint: Point;
   } | null>(null);
 
+  const [selectionRect, setSelectionRect] = useState<{
+    startX: number;
+    startY: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
+
   const nodeRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   useEffect(() => {
@@ -83,12 +92,30 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({ state, dispatch, viewport
         e.preventDefault();
         setIsPanning(true);
         panOffset.current = { x: e.clientX - viewport.tx, y: e.clientY - viewport.ty };
+        return;
     }
-    if (!(e.target as HTMLElement).closest('.cursor-pointer, .connection-path')) {
-        dispatch({ type: 'SET_SELECTED_NODE', payload: { nodeId: null } });
+
+    const target = e.target as HTMLElement;
+    const isCanvasClick = !target.closest('.cursor-pointer, .connection-path');
+    
+    if (isCanvasClick && e.button === 0) {
+        const canvasRect = canvasRef.current!.getBoundingClientRect();
+        const startX = (e.clientX - canvasRect.left - viewport.tx) / viewport.scale;
+        const startY = (e.clientY - canvasRect.top - viewport.ty) / viewport.scale;
+
+        setSelectionRect({
+            startX,
+            startY,
+            x: startX,
+            y: startY,
+            width: 0,
+            height: 0,
+        });
+
+        dispatch({ type: 'SET_SELECTED_NODES', payload: { nodeIds: [] } });
         dispatch({ type: 'SET_SELECTED_CONNECTION', payload: { connectionId: null } });
     }
-  }, [viewport.tx, viewport.ty, dispatch]);
+  }, [viewport.tx, viewport.ty, viewport.scale, dispatch]);
 
   const visibleNodes = useMemo(() => {
     const visibleNodeIds = new Set<string>();
@@ -139,6 +166,19 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({ state, dispatch, viewport
 }, [state.nodes, state.rootId]);
   
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (selectionRect) {
+        const canvasRect = canvasRef.current!.getBoundingClientRect();
+        const currentX = (e.clientX - canvasRect.left - viewport.tx) / viewport.scale;
+        const currentY = (e.clientY - canvasRect.top - viewport.ty) / viewport.scale;
+
+        const newX = Math.min(selectionRect.startX, currentX);
+        const newY = Math.min(selectionRect.startY, currentY);
+        const newWidth = Math.abs(currentX - selectionRect.startX);
+        const newHeight = Math.abs(currentY - selectionRect.startY);
+
+        setSelectionRect(r => r ? { ...r, x: newX, y: newY, width: newWidth, height: newHeight } : null);
+        return;
+    }
     if (connectionDragInfo) {
       const canvasRect = canvasRef.current!.getBoundingClientRect();
       const endX = (e.clientX - canvasRect.left - viewport.tx) / viewport.scale;
@@ -164,9 +204,36 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({ state, dispatch, viewport
         nodeEl.style.transform = `translate(${newX}px, ${newY}px)`;
       }
     }
-  }, [isPanning, viewport, setViewport, connectionDragInfo]);
+  }, [isPanning, viewport, setViewport, connectionDragInfo, selectionRect]);
 
   const handleMouseUp = useCallback((e: React.MouseEvent) => {
+    if (selectionRect) {
+        if (selectionRect.width > 5 || selectionRect.height > 5) {
+            const selectedIds: string[] = [];
+            visibleNodes.forEach(node => {
+                const nodeRect = {
+                    x: node.position.x,
+                    y: node.position.y,
+                    width: node.dimensions.width,
+                    height: node.dimensions.height,
+                };
+                
+                if (
+                    selectionRect.x < nodeRect.x + nodeRect.width &&
+                    selectionRect.x + selectionRect.width > nodeRect.x &&
+                    selectionRect.y < nodeRect.y + nodeRect.height &&
+                    selectionRect.y + selectionRect.height > nodeRect.y
+                ) {
+                    selectedIds.push(node.id);
+                }
+            });
+            if (selectedIds.length > 0) {
+                dispatch({ type: 'SET_SELECTED_NODES', payload: { nodeIds: selectedIds } });
+            }
+        }
+        setSelectionRect(null);
+    }
+
     if (connectionDragInfo) {
       const targetEl = e.target as HTMLElement;
       const connectPoint = targetEl.closest('[data-connect-point="true"]');
@@ -189,7 +256,7 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({ state, dispatch, viewport
     if (isPanning) {
       setIsPanning(false);
     }
-  }, [dispatch, isPanning, connectionDragInfo]);
+  }, [dispatch, isPanning, connectionDragInfo, selectionRect, visibleNodes]);
 
   const visibleConnections = useMemo(() => {
     const visibleNodeIds = new Set(visibleNodes.map(n => n.id));
@@ -205,7 +272,7 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({ state, dispatch, viewport
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
-      style={{ cursor: isPanning || dragInfo.current || connectionDragInfo ? 'grabbing' : 'grab' }}
+      style={{ cursor: isPanning || dragInfo.current || connectionDragInfo ? 'grabbing' : selectionRect ? 'crosshair' : 'grab' }}
     >
       <div
         className="transform-origin-top-left"
@@ -298,7 +365,7 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({ state, dispatch, viewport
                   else nodeRefs.current.delete(node.id);
               }}
               node={node}
-              isSelected={state.selectedNodeId === node.id}
+              isSelected={state.selectedNodeIds.includes(node.id)}
               dispatch={dispatch}
               onDragStart={handleNodeDragStart}
               onConnectionStart={handleConnectionStart}
@@ -308,6 +375,16 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({ state, dispatch, viewport
             />
           );
         })}
+        {selectionRect && (
+            <div
+                className="absolute border-2 border-dashed border-blue-500 bg-blue-500 bg-opacity-20 pointer-events-none z-30"
+                style={{
+                    transform: `translate(${selectionRect.x}px, ${selectionRect.y}px)`,
+                    width: `${selectionRect.width}px`,
+                    height: `${selectionRect.height}px`,
+                }}
+            />
+        )}
       </div>
     </div>
   );

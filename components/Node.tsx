@@ -63,7 +63,7 @@ const Node: React.ForwardRefRenderFunction<HTMLDivElement, NodeProps> = (
   
   const handleSelect = (e: React.MouseEvent) => {
     e.stopPropagation();
-    dispatch({ type: 'SET_SELECTED_NODE', payload: { nodeId: node.id } });
+    dispatch({ type: 'SET_SELECTED_NODES', payload: { nodeIds: [node.id] } });
   };
 
   const handleDoubleClick = (e: React.MouseEvent) => {
@@ -126,7 +126,7 @@ const Node: React.ForwardRefRenderFunction<HTMLDivElement, NodeProps> = (
           <>
             {isRoot ? (
               <>
-                <div className="absolute top-1/2 -left-3 transform -translate-y-1/2 z-10">
+                <div className="absolute top-1/2 -left-8 transform -translate-y-1/2 z-10">
                   <button 
                     className={buttonClass} 
                     onClick={(e) => { e.stopPropagation(); dispatch({ type: 'ADD_NODE', payload: { parentId: node.id, branch: 'left' }})}} 
@@ -134,7 +134,7 @@ const Node: React.ForwardRefRenderFunction<HTMLDivElement, NodeProps> = (
                       <PlusIcon />
                   </button>
                 </div>
-                <div className="absolute top-1/2 -right-3 transform -translate-y-1/2 z-10">
+                <div className="absolute top-1/2 -right-8 transform -translate-y-1/2 z-10">
                   <button 
                     className={buttonClass} 
                     onClick={(e) => { e.stopPropagation(); dispatch({ type: 'ADD_NODE', payload: { parentId: node.id, branch: 'right' }})}} 
@@ -157,22 +157,24 @@ const Node: React.ForwardRefRenderFunction<HTMLDivElement, NodeProps> = (
                 <>
                     {/* Left branch controls */}
                     <div className="flex items-center space-x-1">
-                        {node.isLeftCollapsed && leftChildrenCount > 0 && (
-                             <div 
-                                className="flex items-center justify-center w-5 h-5 bg-gray-400 text-white text-xs font-bold rounded-full"
-                                title={`${leftChildrenCount} hidden nodes`}
-                            >
-                                {leftChildrenCount}
-                            </div>
-                        )}
                         {leftChildrenCount > 0 && (
-                            <button 
-                                className={buttonClass} 
-                                onClick={(e) => { e.stopPropagation(); dispatch({ type: 'TOGGLE_ROOT_BRANCH_COLLAPSE', payload: { branch: 'left' }}); }}
-                                title={node.isLeftCollapsed ? 'Expand Left' : 'Collapse Left'}
-                            >
-                                {node.isLeftCollapsed ? <CollapseIcon /> : <ExpandIcon />}
-                            </button>
+                            node.isLeftCollapsed ? (
+                                <button 
+                                    className="flex items-center justify-center w-6 h-6 bg-gray-400 text-white text-xs font-bold rounded-full cursor-pointer hover:bg-gray-500 transition-colors"
+                                    onClick={(e) => { e.stopPropagation(); dispatch({ type: 'TOGGLE_ROOT_BRANCH_COLLAPSE', payload: { branch: 'left' }}); }}
+                                    title={`Expand Left (${leftChildrenCount} hidden nodes)`}
+                                >
+                                    {leftChildrenCount}
+                                </button>
+                            ) : (
+                                <button 
+                                    className={buttonClass} 
+                                    onClick={(e) => { e.stopPropagation(); dispatch({ type: 'TOGGLE_ROOT_BRANCH_COLLAPSE', payload: { branch: 'left' }}); }}
+                                    title="Collapse Left"
+                                >
+                                    <ExpandIcon />
+                                </button>
+                            )
                         )}
                     </div>
                     {/* Right branch controls */}
@@ -188,37 +190,30 @@ const Node: React.ForwardRefRenderFunction<HTMLDivElement, NodeProps> = (
                             </a>
                         )}
                         {rightChildrenCount > 0 && (
-                            <button 
-                                className={buttonClass} 
-                                onClick={(e) => { e.stopPropagation(); dispatch({ type: 'TOGGLE_ROOT_BRANCH_COLLAPSE', payload: { branch: 'right' }}); }}
-                                title={node.isRightCollapsed ? 'Expand Right' : 'Collapse Right'}
-                            >
-                                {node.isRightCollapsed ? <CollapseIcon /> : <ExpandIcon />}
-                            </button>
-                        )}
-                        {node.isRightCollapsed && rightChildrenCount > 0 && (
-                            <div 
-                                className="flex items-center justify-center w-5 h-5 bg-gray-400 text-white text-xs font-bold rounded-full"
-                                title={`${rightChildrenCount} hidden nodes`}
-                            >
-                                {rightChildrenCount}
-                            </div>
+                            node.isRightCollapsed ? (
+                                <button 
+                                    className="flex items-center justify-center w-6 h-6 bg-gray-400 text-white text-xs font-bold rounded-full cursor-pointer hover:bg-gray-500 transition-colors"
+                                    onClick={(e) => { e.stopPropagation(); dispatch({ type: 'TOGGLE_ROOT_BRANCH_COLLAPSE', payload: { branch: 'right' }}); }}
+                                    title={`Expand Right (${rightChildrenCount} hidden nodes)`}
+                                >
+                                    {rightChildrenCount}
+                                </button>
+                            ) : (
+                                <button 
+                                    className={buttonClass} 
+                                    onClick={(e) => { e.stopPropagation(); dispatch({ type: 'TOGGLE_ROOT_BRANCH_COLLAPSE', payload: { branch: 'right' }}); }}
+                                    title="Collapse Right"
+                                >
+                                    <ExpandIcon />
+                                </button>
+                            )
                         )}
                     </div>
                 </>
             ) : (
                  <>
-                    {/* Badge on the left */}
-                    <div>
-                    {node.isCollapsed && childCount > 0 && (
-                        <div 
-                        className="flex items-center justify-center w-5 h-5 bg-gray-400 text-white text-xs font-bold rounded-full"
-                        title={`${childCount} hidden nodes`}
-                        >
-                        {childCount}
-                        </div>
-                    )}
-                    </div>
+                    {/* This div is a placeholder to push the right-side icons to the right */}
+                    <div />
 
                     {/* Icons on the right */}
                     <div className="flex items-center space-x-1">
@@ -233,13 +228,23 @@ const Node: React.ForwardRefRenderFunction<HTMLDivElement, NodeProps> = (
                         </a>
                     )}
                     {childCount > 0 && (
-                        <button 
-                        className={buttonClass} 
-                        onClick={(e) => { e.stopPropagation(); dispatch({ type: 'TOGGLE_COLLAPSE', payload: { nodeId: node.id }}); }}
-                        title={node.isCollapsed ? 'Expand' : 'Collapse'}
-                        >
-                        {node.isCollapsed ? <CollapseIcon /> : <ExpandIcon />}
-                        </button>
+                        node.isCollapsed ? (
+                            <button
+                                className="flex items-center justify-center w-6 h-6 bg-gray-400 text-white text-xs font-bold rounded-full cursor-pointer hover:bg-gray-500 transition-colors"
+                                onClick={(e) => { e.stopPropagation(); dispatch({ type: 'TOGGLE_COLLAPSE', payload: { nodeId: node.id }}); }}
+                                title={`Expand (${childCount} hidden nodes)`}
+                            >
+                                {childCount}
+                            </button>
+                        ) : (
+                            <button 
+                                className={buttonClass} 
+                                onClick={(e) => { e.stopPropagation(); dispatch({ type: 'TOGGLE_COLLAPSE', payload: { nodeId: node.id }}); }}
+                                title="Collapse"
+                            >
+                                <ExpandIcon />
+                            </button>
+                        )
                     )}
                     </div>
                 </>
