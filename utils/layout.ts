@@ -1,5 +1,5 @@
 
-import type { MindMapData, MindMapNode } from '../types';
+import type { MindMapData, MindMapNode } from '../types.ts';
 
 const LEVEL_WIDTH = 250;
 const NODE_VERTICAL_SPACING = 30;

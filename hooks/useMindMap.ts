@@ -1,11 +1,13 @@
+
 import { useReducer, useEffect } from 'react';
-import type { MindMapState, MindMapData, MindMapNode, NodeStyle, Point, NodeShape, Connection } from '../types';
-import { saveMap, loadMap } from '../services/mindMapService';
-import { autoLayout } from '../utils/layout';
+import type { MindMapState, MindMapData, MindMapNode, NodeStyle, Point, NodeShape, Connection } from '../types.ts';
+import { autoLayout } from '../utils/layout.ts';
 
 // FIX: Export Action type to be used across components.
 export type Action =
   | { type: 'LOAD_MAP'; payload: MindMapState }
+  | { type: 'NEW_MAP' }
+  | { type: 'SET_MAP_ID', payload: { id: string } }
   | { type: 'ADD_NODE'; payload: { parentId: string; content?: string; branch?: 'left' | 'right' } }
   | { type: 'DELETE_NODE'; payload: { nodeId: string } }
   | { type: 'DELETE_NODES'; payload: { nodeIds: string[] } }
@@ -55,81 +57,25 @@ const createNewNode = (parentId: string | null, content = 'New Idea'): MindMapNo
   shape: 'rounded-rectangle',
 });
 
-const getInitialState = (): HistoryState => {
-  const savedState = loadMap() as MindMapState | null;
-  let presentState: MindMapState;
-
-  if (savedState) {
-    // Migration for older maps
-    Object.values(savedState.nodes).forEach(node => {
-        if (!node.shape) {
-            node.shape = 'rounded-rectangle';
-        }
-        if (node.style && node.style.backgroundOpacity === undefined) {
-            node.style.backgroundOpacity = 1;
-        }
-    });
-    const rootNode = savedState.nodes[savedState.rootId];
-    if (rootNode) {
-        if (rootNode.isLeftCollapsed === undefined) rootNode.isLeftCollapsed = false;
-        if (rootNode.isRightCollapsed === undefined) rootNode.isRightCollapsed = false;
-    }
-     // Migration for maps without connections array
-    if (!savedState.connections) {
-        const newConnections: Connection[] = [];
-        Object.values(savedState.nodes).forEach(node => {
-            if (node.parentId) {
-                newConnections.push({
-                    id: `conn_${node.id}`,
-                    from: node.parentId,
-                    to: node.id,
-                });
-            }
-        });
-        savedState.connections = newConnections;
-    }
-    if (savedState.selectedConnectionId === undefined) {
-        savedState.selectedConnectionId = null;
-    }
-    // Migration from selectedNodeId to selectedNodeIds
-    if ((savedState as any).selectedNodeId) {
-        savedState.selectedNodeIds = [(savedState as any).selectedNodeId];
-        delete (savedState as any).selectedNodeId;
-    } else if (!savedState.selectedNodeIds) {
-        savedState.selectedNodeIds = [];
-    }
-    presentState = savedState;
-  } else {
+const createNewMap = (): MindMapState => {
     const rootNode = createNewNode(null, 'Central Idea');
-    rootNode.position = { x: 0, y: 200 };
+    rootNode.position = { x: 0, y: 0 };
     rootNode.isLeftCollapsed = false;
     rootNode.isRightCollapsed = false;
-    
-    const rightChild = createNewNode(rootNode.id, 'Sub-idea');
-    rightChild.position = { x: 250, y: 150 };
-    rightChild.branch = 'right';
-  
-    const leftChild = createNewNode(rootNode.id, 'Another Sub-idea');
-    leftChild.position = { x: -250, y: 250 };
-    leftChild.branch = 'left';
-  
-    const initialConnections: Connection[] = [
-      { id: `conn_${Date.now()}_1`, from: rootNode.id, to: rightChild.id },
-      { id: `conn_${Date.now()}_2`, from: rootNode.id, to: leftChild.id },
-    ];
-  
-    presentState = {
-      nodes: {
-        [rootNode.id]: rootNode,
-        [rightChild.id]: rightChild,
-        [leftChild.id]: leftChild,
-      },
-      connections: initialConnections,
+
+    return {
+      id: null,
+      name: rootNode.content,
+      nodes: { [rootNode.id]: rootNode },
+      connections: [],
       rootId: rootNode.id,
       selectedNodeIds: [],
       selectedConnectionId: null,
     };
-  }
+};
+
+const getInitialState = (): HistoryState => {
+  const presentState = createNewMap();
 
   return {
     past: [],
@@ -159,8 +105,14 @@ const isNodeInMainTree = (nodeId: string, state: MindMapState): boolean => {
 
 const mindMapReducer = (state: MindMapState, action: Action): MindMapState => {
   switch (action.type) {
+    case 'NEW_MAP':
+        return createNewMap();
+
     case 'LOAD_MAP':
       return action.payload;
+    
+    case 'SET_MAP_ID':
+        return { ...state, id: action.payload.id };
       
     case 'ADD_NODE': {
       const { parentId } = action.payload;
@@ -308,7 +260,20 @@ const mindMapReducer = (state: MindMapState, action: Action): MindMapState => {
         return { ...state, nodes: { ...state.nodes, [nodeId]: updatedNode } };
     }
     
-    case 'UPDATE_NODE_CONTENT':
+    case 'UPDATE_NODE_CONTENT': {
+      const { nodeId, content } = action.payload;
+      const node = state.nodes[nodeId];
+      if (!node) return state;
+
+      const updatedNode: MindMapNode = { ...node, content: content };
+      const newNodes = { ...state.nodes, [nodeId]: updatedNode };
+
+      if (nodeId === state.rootId) {
+        return { ...state, nodes: newNodes, name: content };
+      }
+      return { ...state, nodes: newNodes };
+    }
+
     case 'UPDATE_NODE_STYLE':
     case 'UPDATE_NODE_DETAILS':
     case 'TOGGLE_COLLAPSE':
@@ -318,8 +283,7 @@ const mindMapReducer = (state: MindMapState, action: Action): MindMapState => {
       if (!node) return state;
       
       let updatedNode: MindMapNode;
-      if(action.type === 'UPDATE_NODE_CONTENT') updatedNode = { ...node, content: action.payload.content };
-      else if(action.type === 'UPDATE_NODE_STYLE') updatedNode = { ...node, style: { ...node.style, ...action.payload.style } };
+      if(action.type === 'UPDATE_NODE_STYLE') updatedNode = { ...node, style: { ...node.style, ...action.payload.style } };
       else if(action.type === 'UPDATE_NODE_DETAILS') updatedNode = { ...node, note: action.payload.note ?? node.note, link: action.payload.link ?? node.link };
       else if(action.type === 'TOGGLE_COLLAPSE') updatedNode = { ...node, isCollapsed: !node.isCollapsed };
       else if(action.type === 'UPDATE_NODE_SHAPE') updatedNode = { ...node, shape: action.payload.shape };
@@ -498,7 +462,7 @@ const undoable = (reducer: typeof mindMapReducer) => {
         const { past, present, future } = state;
 
         // Actions that shouldn't affect the undo history
-        const nonUndoableActions = ['SET_SELECTED_NODES', 'SET_SELECTED_CONNECTION'];
+        const nonUndoableActions = ['SET_SELECTED_NODES', 'SET_SELECTED_CONNECTION', 'SET_MAP_ID'];
         if (nonUndoableActions.includes(action.type)) {
             return {
                 ...state,
@@ -527,6 +491,14 @@ const undoable = (reducer: typeof mindMapReducer) => {
                     future: newFuture,
                 };
             }
+            case 'LOAD_MAP':
+            case 'NEW_MAP': { // Loading a map should clear history
+                return {
+                    past: [],
+                    present: reducer(present, action),
+                    future: [],
+                }
+            }
             default: {
                 const newPresent = reducer(present, action);
                 // If the state hasn't changed, don't update history
@@ -547,11 +519,6 @@ const finalReducer = undoable(mindMapReducer);
 
 export const useMindMap = () => {
   const [historyState, dispatch] = useReducer(finalReducer, getInitialState());
-
-  useEffect(() => {
-    // We only save the present state, not the entire history
-    saveMap(historyState.present);
-  }, [historyState.present]);
 
   return { 
     state: historyState.present, 

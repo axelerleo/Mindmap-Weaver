@@ -1,8 +1,9 @@
+
 import React, { useRef, useCallback, useState, useMemo, useEffect } from 'react';
-import type { MindMapState, Point } from '../types';
-import { MemoizedNode } from './Node';
+import type { MindMapState, Point } from '../types.ts';
+import { MemoizedNode } from './Node.tsx';
 import type { Dispatch } from 'react';
-import type { Action } from '../hooks/useMindMap';
+import type { Action } from '../hooks/useMindMap.ts';
 
 interface MindMapCanvasProps {
   state: MindMapState;

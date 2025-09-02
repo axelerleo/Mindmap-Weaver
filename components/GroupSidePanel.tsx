@@ -1,7 +1,7 @@
 import React from 'react';
-import type { NodeStyle, NodeShape } from '../types';
+import type { NodeStyle, NodeShape } from '../types.ts';
 import type { Dispatch } from 'react';
-import type { Action } from '../hooks/useMindMap';
+import type { Action } from '../hooks/useMindMap.ts';
 
 interface GroupSidePanelProps {
   nodeIds: string[];

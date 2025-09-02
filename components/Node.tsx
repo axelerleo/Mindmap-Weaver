@@ -1,9 +1,10 @@
+
 import React, { useState, useRef, useEffect, forwardRef } from 'react';
-import type { MindMapNode } from '../types';
-import { PlusIcon, TrashIcon, NoteIcon, LinkIcon, ExpandIcon, CollapseIcon } from './Icons';
+import type { MindMapNode } from '../types.ts';
+import { PlusIcon, TrashIcon, NoteIcon, LinkIcon, ExpandIcon, CollapseIcon } from './Icons.tsx';
 import type { Dispatch } from 'react';
 // FIX: Import the specific Action type from useMindMap to resolve type conflicts.
-import type { Action } from '../hooks/useMindMap';
+import type { Action } from '../hooks/useMindMap.ts';
 
 interface NodeProps {
   node: MindMapNode;

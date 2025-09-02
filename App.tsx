@@ -1,14 +1,29 @@
+
 import React, { useState, useCallback, useEffect } from 'react';
-import MindMapCanvas from './components/MindMapCanvas';
-import Toolbar from './components/Toolbar';
-import SidePanel from './components/SidePanel';
-import GroupSidePanel from './components/GroupSidePanel';
-import { useMindMap } from './hooks/useMindMap';
+import MindMapCanvas from './components/MindMapCanvas.tsx';
+import Toolbar from './components/Toolbar.tsx';
+import SidePanel from './components/SidePanel.tsx';
+import GroupSidePanel from './components/GroupSidePanel.tsx';
+import MapsModal from './components/MapsModal.tsx';
+import { useMindMap } from './hooks/useMindMap.ts';
+// FIX: Use the local User type definition to match the legacy Firebase SDK.
+import type { User } from './types.ts';
+import { auth } from './firebase/config.ts';
+import { saveMapToFirestore, loadMapFromFirestore } from './services/mindMapService.ts';
 
 const App: React.FC = () => {
   const { state, dispatch, canUndo, canRedo } = useMindMap();
   const { nodes, selectedNodeIds, rootId } = state;
   const [viewport, setViewport] = useState({ scale: 1, tx: 0, ty: 0 });
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [isMapsModalOpen, setIsMapsModalOpen] = useState(false);
+
+  useEffect(() => {
+    const unsubscribe = auth.onAuthStateChanged(user => {
+      setCurrentUser(user);
+    });
+    return () => unsubscribe();
+  }, []);
 
   const selectedNode = selectedNodeIds.length === 1 ? nodes[selectedNodeIds[0]] : null;
 
@@ -30,6 +45,74 @@ const App: React.FC = () => {
   const handleRedo = useCallback(() => {
     if (canRedo) dispatch({ type: 'REDO' });
   }, [canRedo, dispatch]);
+
+  const handleLogin = () => {
+    const provider = new (window as any).firebase.auth.GoogleAuthProvider();
+    auth.signInWithPopup(provider).catch(error => console.error(error));
+  };
+
+  const handleLogout = () => {
+    auth.signOut();
+  };
+  
+ const handleSaveMap = async () => {
+    if (!currentUser) {
+        alert("You must be logged in to save a map.");
+        return;
+    }
+
+    if (!state.id) {
+        const newName = prompt("Enter a name for your mind map:", state.name);
+        if (newName && newName.trim() !== "") {
+            const stateToSave = {
+                ...state,
+                name: newName,
+                nodes: {
+                    ...state.nodes,
+                    [state.rootId]: {
+                        ...state.nodes[state.rootId],
+                        content: newName,
+                    },
+                },
+            };
+            
+            try {
+                const savedId = await saveMapToFirestore(stateToSave, currentUser.uid, newName);
+                dispatch({ type: 'LOAD_MAP', payload: { ...stateToSave, id: savedId } });
+                alert(`Map "${newName}" saved successfully!`);
+            } catch (error) {
+                console.error("Error saving new map:", error);
+                alert("Failed to save new map. Please try again.");
+            }
+        }
+    } else {
+        try {
+            await saveMapToFirestore(state, currentUser.uid, state.name);
+            alert(`Map "${state.name}" saved successfully!`);
+        } catch (error) {
+            console.error("Error updating map:", error);
+            alert("Failed to save map. Please try again.");
+        }
+    }
+ };
+
+ const handleNewMap = useCallback(() => {
+    if (confirm("Are you sure you want to create a new map? Any unsaved changes will be lost.")) {
+        dispatch({ type: 'NEW_MAP' });
+    }
+ }, [dispatch]);
+
+  const handleLoadMap = async (mapId: string) => {
+    try {
+        const loadedMapState = await loadMapFromFirestore(mapId);
+        if (loadedMapState) {
+            dispatch({ type: 'LOAD_MAP', payload: loadedMapState });
+        }
+        setIsMapsModalOpen(false);
+    } catch (error) {
+        alert("Failed to load map.");
+    }
+  };
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -79,6 +162,12 @@ const App: React.FC = () => {
       <header className="flex-shrink-0 bg-white shadow-md z-20 p-2 flex items-center justify-between">
         <h1 className="text-xl font-bold text-gray-800">AI Mind Map Weaver</h1>
         <Toolbar 
+          user={currentUser}
+          onLogin={handleLogin}
+          onLogout={handleLogout}
+          onSave={handleSaveMap}
+          onNewMap={handleNewMap}
+          onOpenMaps={() => setIsMapsModalOpen(true)}
           onZoom={handleZoom} 
           onAutoLayout={handleAutoLayout}
           onUndo={handleUndo}
@@ -106,6 +195,14 @@ const App: React.FC = () => {
              nodeIds={selectedNodeIds}
              dispatch={dispatch}
              onClose={() => dispatch({ type: 'SET_SELECTED_NODES', payload: { nodeIds: [] } })}
+            />
+        )}
+        {currentUser && isMapsModalOpen && (
+            <MapsModal
+                isOpen={isMapsModalOpen}
+                onClose={() => setIsMapsModalOpen(false)}
+                userId={currentUser.uid}
+                onLoadMap={handleLoadMap}
             />
         )}
       </main>

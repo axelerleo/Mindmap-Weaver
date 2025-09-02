@@ -1,3 +1,4 @@
+
 export interface Point {
   x: number;
   y: number;
@@ -40,9 +41,24 @@ export interface Connection {
 }
 
 export interface MindMapState {
+  id?: string | null; // Document ID from Firestore
+  name: string;
   nodes: MindMapData;
   connections: Connection[];
   rootId: string;
   selectedNodeIds: string[];
   selectedConnectionId: string | null;
+}
+
+// FIX: Add User interface to be used across the app, avoiding Firebase SDK version conflicts.
+export interface User {
+  uid: string;
+  displayName: string | null;
+  photoURL: string | null;
+}
+
+export interface UserMap {
+    id: string;
+    name: string;
+    updatedAt: Date;
 }

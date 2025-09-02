@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import type { MindMapNode, NodeStyle, NodeShape } from '../types';
+import type { MindMapNode, NodeStyle, NodeShape } from '../types.ts';
 import type { Dispatch } from 'react';
-import type { Action } from '../hooks/useMindMap';
+import type { Action } from '../hooks/useMindMap.ts';
 
 interface SidePanelProps {
   node: MindMapNode;
