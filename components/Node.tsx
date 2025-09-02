@@ -10,6 +10,7 @@ interface NodeProps {
   isSelected: boolean;
   dispatch: Dispatch<Action>;
   onDragStart: (e: React.MouseEvent, nodeId: string) => void;
+  onConnectionStart: (e: React.MouseEvent, nodeId: string) => void;
   childCount: number;
   leftChildrenCount: number;
   rightChildrenCount: number;
@@ -36,7 +37,7 @@ const hexToRgba = (hex: string, alpha: number): string => {
 
 
 const Node: React.ForwardRefRenderFunction<HTMLDivElement, NodeProps> = (
-  { node, isSelected, dispatch, onDragStart, childCount, leftChildrenCount, rightChildrenCount },
+  { node, isSelected, dispatch, onDragStart, onConnectionStart, childCount, leftChildrenCount, rightChildrenCount },
   ref
 ) => {
   const [isEditing, setIsEditing] = useState(false);
@@ -244,8 +245,23 @@ const Node: React.ForwardRefRenderFunction<HTMLDivElement, NodeProps> = (
                 </>
             )}
         </div>
-
       </div>
+      
+       {/* Connection Points */}
+       <div
+        className="absolute top-1/2 -left-1.5 w-3 h-3 bg-blue-500 rounded-full border-2 border-white cursor-crosshair z-20 hover:scale-125 transition-transform"
+        style={{ transform: 'translateY(-50%)' }}
+        data-connect-point="true"
+        data-node-id={node.id}
+        onMouseDown={(e) => { e.stopPropagation(); onConnectionStart(e, node.id); }}
+      />
+      <div
+        className="absolute top-1/2 -right-1.5 w-3 h-3 bg-blue-500 rounded-full border-2 border-white cursor-crosshair z-20 hover:scale-125 transition-transform"
+        style={{ transform: 'translateY(-50%)' }}
+        data-connect-point="true"
+        data-node-id={node.id}
+        onMouseDown={(e) => { e.stopPropagation(); onConnectionStart(e, node.id); }}
+      />
       
       {showNote && node.note && (
         <div className="absolute z-20 mt-2 w-64 p-3 bg-yellow-50 border border-yellow-200 rounded-lg shadow-lg text-sm text-gray-800" style={{top: '100%'}}>

@@ -33,8 +33,16 @@ export interface MindMapData {
   [id: string]: MindMapNode;
 }
 
+export interface Connection {
+  id: string;
+  from: string;
+  to: string;
+}
+
 export interface MindMapState {
   nodes: MindMapData;
+  connections: Connection[];
   rootId: string;
   selectedNodeId: string | null;
+  selectedConnectionId: string | null;
 }

@@ -25,7 +25,6 @@ const App: React.FC = () => {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Delete' && e.key !== 'Backspace') return;
-      if (!selectedNodeId || selectedNodeId === rootId) return;
 
       const activeElement = document.activeElement;
       const isEditing = 
@@ -37,8 +36,13 @@ const App: React.FC = () => {
 
       if (isEditing) return;
 
-      e.preventDefault(); // Prevent browser back navigation on Backspace key
-      dispatch({ type: 'DELETE_NODE', payload: { nodeId: selectedNodeId } });
+      if (selectedNodeId && selectedNodeId !== rootId) {
+        e.preventDefault();
+        dispatch({ type: 'DELETE_NODE', payload: { nodeId: selectedNodeId } });
+      } else if (state.selectedConnectionId) {
+        e.preventDefault();
+        dispatch({ type: 'DELETE_CONNECTION', payload: { connectionId: state.selectedConnectionId } });
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -46,7 +50,7 @@ const App: React.FC = () => {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [selectedNodeId, rootId, dispatch]);
+  }, [selectedNodeId, state.selectedConnectionId, rootId, dispatch]);
 
   return (
     <div className="w-screen h-screen bg-gray-100 font-sans flex flex-col overflow-hidden">

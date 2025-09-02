@@ -1,5 +1,5 @@
 import { useReducer, useEffect } from 'react';
-import type { MindMapState, MindMapData, MindMapNode, NodeStyle, Point, NodeShape } from '../types';
+import type { MindMapState, MindMapData, MindMapNode, NodeStyle, Point, NodeShape, Connection } from '../types';
 import { saveMap, loadMap } from '../services/mindMapService';
 import { autoLayout } from '../utils/layout';
 
@@ -16,7 +16,11 @@ export type Action =
   | { type: 'TOGGLE_ROOT_BRANCH_COLLAPSE'; payload: { branch: 'left' | 'right' } }
   | { type: 'SET_SELECTED_NODE'; payload: { nodeId: string | null } }
   | { type: 'UPDATE_NODE_SHAPE'; payload: { nodeId: string; shape: NodeShape } }
-  | { type: 'AUTO_LAYOUT' };
+  | { type: 'AUTO_LAYOUT' }
+  | { type: 'ADD_CONNECTION'; payload: { from: string; to: string } }
+  | { type: 'DELETE_CONNECTION'; payload: { connectionId: string } }
+  | { type: 'SET_SELECTED_CONNECTION'; payload: { connectionId: string | null } };
+
 
 const defaultNodeStyle: NodeStyle = {
   backgroundColor: '#ffffff',
@@ -41,7 +45,7 @@ const createNewNode = (parentId: string | null, content = 'New Idea'): MindMapNo
 });
 
 const getInitialState = (): MindMapState => {
-  const savedState = loadMap() as MindMapState | (MindMapState & { connections?: any[] }) | null;
+  const savedState = loadMap() as MindMapState | null;
   if (savedState) {
     // Simple migration for older maps
     Object.values(savedState.nodes).forEach(node => {
@@ -57,12 +61,24 @@ const getInitialState = (): MindMapState => {
         if (rootNode.isLeftCollapsed === undefined) rootNode.isLeftCollapsed = false;
         if (rootNode.isRightCollapsed === undefined) rootNode.isRightCollapsed = false;
     }
-    // Remove connections array if it exists from old versions
-    // FIX: Use `in` operator for type-safe property checking on a union type.
-    if ('connections' in savedState && savedState.connections) {
-        delete (savedState as any).connections;
+     // Migration for maps without connections array
+    if (!savedState.connections) {
+        const newConnections: Connection[] = [];
+        Object.values(savedState.nodes).forEach(node => {
+            if (node.parentId) {
+                newConnections.push({
+                    id: `conn_${node.id}`,
+                    from: node.parentId,
+                    to: node.id,
+                });
+            }
+        });
+        savedState.connections = newConnections;
     }
-    return savedState as MindMapState;
+    if (savedState.selectedConnectionId === undefined) {
+        savedState.selectedConnectionId = null;
+    }
+    return savedState;
   }
 
   const rootNode = createNewNode(null, 'Central Idea');
@@ -78,15 +94,41 @@ const getInitialState = (): MindMapState => {
   leftChild.position = { x: -250, y: 250 };
   leftChild.branch = 'left';
 
+  const initialConnections: Connection[] = [
+    { id: `conn_${Date.now()}_1`, from: rootNode.id, to: rightChild.id },
+    { id: `conn_${Date.now()}_2`, from: rootNode.id, to: leftChild.id },
+  ];
+
   return {
     nodes: {
       [rootNode.id]: rootNode,
       [rightChild.id]: rightChild,
       [leftChild.id]: leftChild,
     },
+    connections: initialConnections,
     rootId: rootNode.id,
     selectedNodeId: null,
+    selectedConnectionId: null,
   };
+};
+
+const isNodeInMainTree = (nodeId: string, state: MindMapState): boolean => {
+    let currentId: string | null = nodeId;
+    // Safety break to prevent infinite loops on corrupted data
+    let safetyCounter = Object.keys(state.nodes).length; 
+    while (currentId && safetyCounter > 0) {
+        if (currentId === state.rootId) {
+            return true; // We've reached the main root
+        }
+        const currentNode = state.nodes[currentId];
+        // If node is missing or is a root of another tree, it's not in the main tree
+        if (!currentNode || currentNode.parentId === null) {
+            return false; 
+        }
+        currentId = currentNode.parentId;
+        safetyCounter--;
+    }
+    return false;
 };
 
 const mindMapReducer = (state: MindMapState, action: Action): MindMapState => {
@@ -100,10 +142,16 @@ const mindMapReducer = (state: MindMapState, action: Action): MindMapState => {
       if (!parentNode) return state;
 
       const newNode = createNewNode(parentId, action.payload.content);
-      const parentPos = parentNode.position;
-
-      const isRootParent = parentNode.id === state.rootId;
-      const branch = isRootParent ? action.payload.branch : parentNode.branch;
+      
+      let branch: 'left' | 'right' | undefined;
+      // If parent is an orphan node (new root), determine branch by position.
+      if (parentNode.parentId === null && parentId !== state.rootId) {
+        const childCount = Object.values(state.nodes).filter(n => n.parentId === parentId).length;
+        branch = childCount % 2 === 0 ? 'right' : 'left';
+      } else {
+        const isRootParent = parentNode.id === state.rootId;
+        branch = isRootParent ? action.payload.branch : parentNode.branch;
+      }
       newNode.branch = branch;
 
       // Inherit style from parent
@@ -128,12 +176,18 @@ const mindMapReducer = (state: MindMapState, action: Action): MindMapState => {
         newY = lastSibling.position.y + lastSibling.dimensions.height + VERTICAL_SPACING;
       } else {
         // First child on this branch
-        newY = parentPos.y;
+        newY = parentNode.position.y;
       }
 
       newNode.position = {
-        x: parentPos.x + (LEVEL_WIDTH * direction),
+        x: parentNode.position.x + (LEVEL_WIDTH * direction),
         y: newY,
+      };
+      
+      const newConnection: Connection = {
+        id: `conn_${newNode.id}`,
+        from: parentId,
+        to: newNode.id,
       };
       
       return {
@@ -142,7 +196,9 @@ const mindMapReducer = (state: MindMapState, action: Action): MindMapState => {
           ...state.nodes,
           [newNode.id]: newNode,
         },
+        connections: [...state.connections, newConnection],
         selectedNodeId: newNode.id,
+        selectedConnectionId: null,
       };
     }
     
@@ -165,10 +221,15 @@ const mindMapReducer = (state: MindMapState, action: Action): MindMapState => {
 
       const newNodes = { ...state.nodes };
       nodesToDelete.forEach(id => delete newNodes[id]);
+      
+      const newConnections = state.connections.filter(
+        conn => !nodesToDelete.has(conn.from) && !nodesToDelete.has(conn.to)
+      );
 
       return {
         ...state,
         nodes: newNodes,
+        connections: newConnections,
         selectedNodeId: state.selectedNodeId === nodeId ? null : state.selectedNodeId,
       };
     }
@@ -217,7 +278,7 @@ const mindMapReducer = (state: MindMapState, action: Action): MindMapState => {
     }
 
     case 'SET_SELECTED_NODE':
-      return { ...state, selectedNodeId: action.payload.nodeId };
+      return { ...state, selectedNodeId: action.payload.nodeId, selectedConnectionId: null };
       
     case 'AUTO_LAYOUT': {
       const updatedNodes = autoLayout(state.nodes, state.rootId);
@@ -226,6 +287,107 @@ const mindMapReducer = (state: MindMapState, action: Action): MindMapState => {
         nodes: updatedNodes,
       };
     }
+
+    case 'ADD_CONNECTION': {
+        const { from: originalFrom, to: originalTo } = action.payload;
+    
+        if (originalFrom === originalTo) return state;
+    
+        const fromIsInMainTree = isNodeInMainTree(originalFrom, state);
+        const toIsInMainTree = isNodeInMainTree(originalTo, state);
+        
+        let from = originalFrom;
+        let to = originalTo;
+        
+        // Logic: if connecting an orphan node to a node in the main tree,
+        // the main tree node MUST be the parent. We reverse the connection if needed.
+        if (!fromIsInMainTree && toIsInMainTree) {
+            from = originalTo;
+            to = originalFrom;
+        }
+
+        const fromNode = state.nodes[from];
+        const toNode = state.nodes[to];
+        if (!toNode || !fromNode) return state;
+    
+        // Extra safeguard: The root node can never become a child of another node.
+        if (to === state.rootId) {
+            return state;
+        }
+
+        // Prevent circular dependencies: the new parent (`from`) cannot be a
+        // descendant of the new child (`to`). We check by traversing up from `from`
+        // and seeing if we encounter `to`.
+        let currentAncestorId: string | null = from;
+        while (currentAncestorId) {
+            if (currentAncestorId === to) {
+                // This would create a loop, so we abort the action.
+                return state;
+            }
+            const currentNode = state.nodes[currentAncestorId];
+            currentAncestorId = currentNode ? currentNode.parentId : null;
+        }
+
+        let newBranch: 'left' | 'right' | undefined;
+        if (fromNode.id === state.rootId) {
+            newBranch = toNode.position.x < fromNode.position.x ? 'left' : 'right';
+        } else {
+            newBranch = fromNode.branch;
+        }
+
+        const newNodes = { ...state.nodes };
+
+        // Update the node being moved first
+        newNodes[to] = { ...newNodes[to], parentId: from, branch: newBranch };
+        
+        // Traverse descendants and update their branch property
+        const updateBranchRecursively = (nodeId: string, branch: 'left' | 'right' | undefined) => {
+            const children = Object.values(newNodes).filter(n => n.parentId === nodeId);
+            for (const child of children) {
+                newNodes[child.id] = { ...newNodes[child.id], branch: branch };
+                updateBranchRecursively(child.id, branch);
+            }
+        };
+        updateBranchRecursively(to, newBranch);
+
+        const newConnection: Connection = {
+            id: `conn_${from}_${to}_${Date.now()}`,
+            from,
+            to,
+        };
+
+        const oldParentId = state.nodes[to]?.parentId;
+        const connectionsWithoutOld = oldParentId
+            ? state.connections.filter(c => !(c.to === to && c.from === oldParentId))
+            : state.connections;
+
+        return {
+            ...state,
+            nodes: newNodes,
+            connections: [...connectionsWithoutOld, newConnection],
+        };
+    }
+
+    case 'DELETE_CONNECTION': {
+        const { connectionId } = action.payload;
+        const connectionToDelete = state.connections.find(c => c.id === connectionId);
+        if (!connectionToDelete) return state;
+
+        const newConnections = state.connections.filter(c => c.id !== connectionId);
+        const targetNode = state.nodes[connectionToDelete.to];
+        
+        const updatedNode = { ...targetNode, parentId: null, branch: undefined };
+
+        return {
+            ...state,
+            nodes: { ...state.nodes, [connectionToDelete.to]: updatedNode },
+            connections: newConnections,
+            selectedConnectionId: null,
+        };
+    }
+
+    case 'SET_SELECTED_CONNECTION':
+      return { ...state, selectedConnectionId: action.payload.connectionId, selectedNodeId: null };
 
     default:
       return state;
